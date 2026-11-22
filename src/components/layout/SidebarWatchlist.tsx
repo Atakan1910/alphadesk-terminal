@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Search, Star, X } from 'lucide-react';
-import type { StockAsset } from '../../types/market';
+import { useEffect, useMemo, useState } from 'react';
+import { Globe, Loader2, Plus, Search, Star, X } from 'lucide-react';
+import { HybridMarketDataAdapter } from '../../data/dataAdapter';
+import type { RemoteSearchItem, StockAsset } from '../../types/market';
 
 type FilterMode = 'ALL' | 'BIST' | 'GLOBAL' | 'WATCHLIST';
 
@@ -8,8 +9,12 @@ interface SidebarWatchlistProps {
   assets: StockAsset[];
   activeSymbol: string;
   watchlist: string[];
+  workerUrl: string;
+  loadingRemoteSymbol: string | null;
   onSelectSymbol: (symbol: string) => void;
+  onLoadRemoteStock: (item: RemoteSearchItem) => void;
   onToggleWatchlist: (symbol: string) => void;
+  onOpenSettings: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -18,13 +23,49 @@ export function SidebarWatchlist({
   assets,
   activeSymbol,
   watchlist,
+  workerUrl,
+  loadingRemoteSymbol,
   onSelectSymbol,
+  onLoadRemoteStock,
   onToggleWatchlist,
+  onOpenSettings,
   mobileOpen,
   onCloseMobile,
 }: SidebarWatchlistProps) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<FilterMode>('ALL');
+  const [remoteResults, setRemoteResults] = useState<RemoteSearchItem[]>([]);
+  const [searchingRemote, setSearchingRemote] = useState(false);
+
+  const existingSymbolSet = useMemo(
+    () => new Set(assets.map((a) => a.symbol.toUpperCase())),
+    [assets]
+  );
+
+  const isSearchValid = Boolean(workerUrl.trim()) && query.trim().length >= 2;
+
+  useEffect(() => {
+    if (!isSearchValid) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setSearchingRemote(true);
+      const items = await HybridMarketDataAdapter.searchRemoteSymbols(query.trim(), workerUrl);
+      if (cancelled) return;
+      setRemoteResults(items.filter((item) => !existingSymbolSet.has(item.symbol.toUpperCase())));
+      setSearchingRemote(false);
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, workerUrl, existingSymbolSet, isSearchValid]);
+
+  const activeRemoteResults = isSearchValid ? remoteResults : [];
+  const isSearchingRemoteActive = isSearchValid && searchingRemote;
 
   const rows = useMemo(() => {
     return assets.map((asset) => {
@@ -51,13 +92,21 @@ export function SidebarWatchlist({
     });
   }, [rows, query, filter, watchlist]);
 
+  const cleanUpper = query.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, '');
+  const showDirectBistShortcut =
+    Boolean(workerUrl.trim()) &&
+    cleanUpper.length >= 3 &&
+    cleanUpper.length <= 6 &&
+    !cleanUpper.includes('.') &&
+    !existingSymbolSet.has(cleanUpper) &&
+    !activeRemoteResults.some((r) => r.symbol === cleanUpper);
+
   const content = (
     <aside className="flex flex-col h-full w-64 border-r border-[#27272a] bg-[#111113] shrink-0">
       <div className="p-3 border-b border-[#27272a] space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-zinc-300">
-            Hisseler{' '}
-            <span className="font-mono text-zinc-500">({filteredRows.length})</span>
+            Hisseler <span className="font-mono text-zinc-500">({filteredRows.length})</span>
           </span>
           <button
             type="button"
@@ -77,7 +126,9 @@ export function SidebarWatchlist({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ara: THYAO, SASA, AAPL..."
+            placeholder={
+              workerUrl.trim() ? 'Tüm BIST & Dünya ara...' : 'Ara: THYAO, SASA, AAPL...'
+            }
             className="w-full bg-[#09090b] border border-[#27272a] focus:border-[#f59e0b] focus:outline-none pl-8 pr-2.5 py-2 text-xs text-zinc-100 placeholder:text-zinc-600"
           />
         </div>
@@ -108,8 +159,98 @@ export function SidebarWatchlist({
       </div>
 
       <div className="flex-1 overflow-y-auto divide-y divide-[#27272a]/50">
+        {/* Canlı Cloudflare Worker Sonuçları */}
+        {query.trim().length >= 2 && workerUrl.trim() && (
+          <div className="bg-[#09090b] border-b border-[#27272a]">
+            <div className="flex items-center justify-between px-3 py-1.5 text-[10px] font-mono uppercase text-[#f59e0b] border-b border-[#27272a]/60">
+              <span className="flex items-center gap-1.5">
+                <Globe className="w-3 h-3" strokeWidth={1.5} /> Canlı Borsa Araması
+              </span>
+              {isSearchingRemoteActive && <Loader2 className="w-3 h-3 animate-spin" strokeWidth={1.5} />}
+            </div>
+
+            {showDirectBistShortcut && (
+              <button
+                type="button"
+                disabled={loadingRemoteSymbol === `${cleanUpper}.IS`}
+                onClick={() => {
+                  onLoadRemoteStock({
+                    symbol: cleanUpper,
+                    yfSymbol: `${cleanUpper}.IS`,
+                    name: `${cleanUpper} (Borsa İstanbul)`,
+                    exchange: 'BIST',
+                    market: 'BIST',
+                    currency: 'TRY',
+                  });
+                  onCloseMobile();
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#18181b] border-b border-[#27272a]/40"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-mono font-semibold text-zinc-100">
+                    {cleanUpper}.IS
+                  </div>
+                  <div className="text-[10px] text-zinc-500">BIST sembolünü doğrudan çek</div>
+                </div>
+                {loadingRemoteSymbol === `${cleanUpper}.IS` ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#f59e0b]" strokeWidth={1.5} />
+                ) : (
+                  <Plus className="w-3.5 h-3.5 text-[#f59e0b]" strokeWidth={1.5} />
+                )}
+              </button>
+            )}
+
+            {activeRemoteResults.map((item) => {
+              const isBusy = loadingRemoteSymbol === item.yfSymbol;
+              return (
+                <button
+                  key={item.yfSymbol}
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() => {
+                    onLoadRemoteStock(item);
+                    onCloseMobile();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-[#18181b] border-b border-[#27272a]/40"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-mono font-semibold text-zinc-100">
+                        {item.symbol}
+                      </span>
+                      <span className="text-[9px] font-mono px-1 border border-[#27272a] text-zinc-400">
+                        {item.exchange}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-zinc-500 truncate">{item.name}</div>
+                  </div>
+                  {isBusy ? (
+                    <Loader2
+                      className="w-3.5 h-3.5 animate-spin text-[#f59e0b] shrink-0"
+                      strokeWidth={1.5}
+                    />
+                  ) : (
+                    <Plus className="w-3.5 h-3.5 text-[#10b981] shrink-0" strokeWidth={1.5} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {filteredRows.length === 0 ? (
-          <div className="p-6 text-xs text-zinc-500 text-center">Eşleşen hisse bulunamadı.</div>
+          <div className="p-5 text-xs text-zinc-500 text-center space-y-2">
+            <div>Kayıtlı listede eşleşen hisse yok.</div>
+            {!workerUrl.trim() && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="px-2.5 py-1.5 border border-[#f59e0b]/40 text-[#f59e0b] hover:bg-[#18181b] text-[11px]"
+              >
+                Tüm borsalar için Worker bağla
+              </button>
+            )}
+          </div>
         ) : (
           filteredRows.map(({ asset, last, changePct }) => {
             const isSelected = asset.symbol === activeSymbol;
@@ -146,8 +287,13 @@ export function SidebarWatchlist({
                     />
                   </button>
                   <div className="min-w-0">
-                    <div className="text-xs font-mono font-semibold text-zinc-100 leading-tight">
-                      {asset.symbol}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-mono font-semibold text-zinc-100 leading-tight">
+                        {asset.symbol}
+                      </span>
+                      {asset.dataSource === 'CLOUDFLARE_WORKER' && (
+                        <span className="text-[9px] font-mono text-[#10b981]">CANLI</span>
+                      )}
                     </div>
                     <div className="text-[11px] text-zinc-500 truncate mt-0.5">{asset.name}</div>
                   </div>
@@ -187,4 +333,3 @@ export function SidebarWatchlist({
     </>
   );
 }
-

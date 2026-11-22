@@ -5,6 +5,7 @@ import type {
   MarketRegion,
   OHLCVBar,
   QuarterlyFinancial,
+  RemoteSearchItem,
   SectorBenchmarks,
   StockAsset,
 } from '../types/market';
@@ -354,6 +355,92 @@ export class HybridMarketDataAdapter {
     }
 
     return { asset: baseAsset, warning: null };
+  }
+
+  static async searchRemoteSymbols(
+    query: string,
+    workerUrl: string
+  ): Promise<RemoteSearchItem[]> {
+    const base = workerUrl.trim().replace(/\/+$/, '');
+    const q = query.trim();
+    if (!base || q.length < 2) return [];
+
+    try {
+      const res = await fetchWithTimeout(
+        `${base}/search?q=${encodeURIComponent(q)}`,
+        6000
+      );
+      if (!res.ok) return [];
+      const json = (await res.json()) as { results?: RemoteSearchItem[] };
+      return Array.isArray(json.results) ? json.results : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static async fetchRemoteStock(
+    yfSymbol: string,
+    workerUrl: string,
+    metaHint?: Partial<RemoteSearchItem>
+  ): Promise<StockAsset | null> {
+    const base = workerUrl.trim().replace(/\/+$/, '');
+    if (!base || !yfSymbol.trim()) return null;
+
+    try {
+      const res = await fetchWithTimeout(
+        `${base}/stock?symbol=${encodeURIComponent(yfSymbol.trim().toUpperCase())}`,
+        8000
+      );
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as {
+        symbol?: string;
+        name?: string;
+        market?: MarketRegion;
+        currency?: CurrencyCode;
+        bars?: OHLCVBar[];
+        lastUpdated?: string;
+      };
+
+      if (!Array.isArray(data.bars) || data.bars.length < 20) return null;
+
+      const symbol = (data.symbol || metaHint?.symbol || yfSymbol.replace(/\.IS$/i, '')).toUpperCase();
+      const market: MarketRegion =
+        data.market || metaHint?.market || (yfSymbol.endsWith('.IS') ? 'BIST' : 'GLOBAL');
+      const currency: CurrencyCode =
+        data.currency || metaHint?.currency || (market === 'BIST' ? 'TRY' : 'USD');
+      const sector = metaHint?.sector || (market === 'BIST' ? 'Sanayi' : 'Teknoloji');
+      const benchmarks = DEFAULT_BENCHMARKS[sector] ?? DEFAULT_BENCHMARKS['Sanayi'];
+
+      // Eğer bu hissenin yerel/ETL bilançosu zaten varsa koru
+      const seed = getSeedStockBySymbol(symbol);
+      const pipeline = await loadPipelineData();
+      const pipeRec = pipeline?.stocks[symbol];
+      const existingQuarters =
+        pipeRec?.quarters && pipeRec.quarters.length >= 4 ? pipeRec.quarters : seed?.quarters ?? [];
+
+      return {
+        symbol,
+        name: data.name || metaHint?.name || seed?.name || symbol,
+        market,
+        currency,
+        sector: seed?.sector || sector,
+        beta: seed?.beta ?? estimateBetaFromBars(data.bars),
+        dividendYield: seed?.dividendYield ?? 0,
+        expectedGrowthRate: seed?.expectedGrowthRate ?? (market === 'BIST' ? 13.0 : 11.5),
+        description:
+          seed?.description ||
+          `${market === 'BIST' ? 'Borsa İstanbul' : 'Global Borsa'} · Cloudflare Worker üzerinden canlı çekildi.`,
+        bars: data.bars,
+        quarters: existingQuarters,
+        benchmarks: seed?.benchmarks ?? benchmarks,
+        news: seed?.news ?? [],
+        dataSource: 'CLOUDFLARE_WORKER',
+        lastUpdated: data.lastUpdated || data.bars[data.bars.length - 1].time,
+      };
+    } catch {
+      return null;
+    }
   }
 }
 

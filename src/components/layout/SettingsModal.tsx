@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, ShieldAlert, X } from 'lucide-react';
+import { Globe, KeyRound, ShieldAlert, X } from 'lucide-react';
 import type { ApiSettings } from '../../types/market';
 
 interface SettingsModalProps {
@@ -23,6 +23,7 @@ function SettingsModalDialog({
   onSave,
   onClose,
 }: SettingsModalProps) {
+  const [workerUrl, setWorkerUrl] = useState<string>(settings.workerUrl);
   const [provider, setProvider] = useState<ApiSettings['provider']>(settings.provider);
   const [apiKey, setApiKey] = useState<string>(settings.apiKey);
 
@@ -34,10 +35,12 @@ function SettingsModalDialog({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  if (!open) return null;
-
   const handleSave = () => {
-    onSave({ provider, apiKey: apiKey.trim() });
+    onSave({
+      workerUrl: workerUrl.trim().replace(/\/+$/, ''),
+      provider,
+      apiKey: apiKey.trim(),
+    });
     onClose();
   };
 
@@ -49,7 +52,7 @@ function SettingsModalDialog({
           <div className="flex items-center gap-2">
             <KeyRound className="w-4 h-4 text-[#f59e0b]" strokeWidth={1.5} />
             <h2 className="text-xs font-semibold uppercase tracking-wider">
-              Hibrit Veri Kaynağı & API Ayarları
+              Canlı Borsa Proxy & Veri Ayarları
             </h2>
           </div>
           <button
@@ -62,27 +65,42 @@ function SettingsModalDialog({
         </div>
 
         <div className="p-4 space-y-4 text-xs">
+          {/* Cloudflare Worker Canlı Arama Proxy */}
+          <div className="border border-[#f59e0b]/40 bg-[#09090b] p-3.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-100">
+              <Globe className="w-3.5 h-3.5 text-[#f59e0b]" strokeWidth={1.5} />
+              <span>Cloudflare Worker Adresi (Tüm BIST & Dünya Hisseleri)</span>
+            </div>
+            <input
+              type="url"
+              value={workerUrl}
+              onChange={(e) => setWorkerUrl(e.target.value)}
+              placeholder="https://alphadesk-proxy.kullanici.workers.dev"
+              className="w-full bg-[#111113] border border-[#27272a] focus:border-[#f59e0b] focus:outline-none px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600"
+            />
+            <p className="text-[11px] text-zinc-500">
+              Adres tanımlandığında sol arama kutusundan listede olmayan tüm BIST ve global hisseleri
+              canlı çekebilirsiniz.
+            </p>
+          </div>
+
           <div className="border border-[#27272a] bg-[#09090b] p-3 space-y-1 font-mono tabular-nums">
-            <div className="text-[11px] uppercase text-zinc-400">Varsayılan Veri Katmanı</div>
+            <div className="text-[11px] uppercase text-zinc-400">Varsayılan ETL Katmanı</div>
             <div className="text-zinc-200">
               {pipelineActive
-                ? `PIPELINE_JSON Aktif · Son Güncelleme: ${generatedAt ?? '-'}`
-                : 'SEED · Deterministik Yerel Motor (public/market-data.json bulunamadı)'}
-            </div>
-            <div className="text-[11px] text-zinc-500 font-sans">
-              BIST ve Global hisseler varsayılan olarak GitHub Actions / yfinance ETL çıktısından
-              okunur; erişilemezse sıfır kesintiyle yerel deterministik motora geçer.
+                ? `PIPELINE_JSON Aktif · ${generatedAt ?? '-'}`
+                : 'SEED · Yerel Deterministik Yedek'}
             </div>
           </div>
 
           <div className="space-y-2">
             <label className="block text-[11px] uppercase text-zinc-400">
-              Opsiyonel Canlı API Sağlayıcısı (ABD / Global)
+              Opsiyonel Harici API (Finnhub / Alpha Vantage)
             </label>
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  { id: 'NONE', label: 'Kapalı (ETL/Seed)' },
+                  { id: 'NONE', label: 'Kapalı' },
                   { id: 'FINNHUB', label: 'Finnhub' },
                   { id: 'ALPHAVANTAGE', label: 'Alpha Vantage' },
                 ] as const
@@ -106,13 +124,13 @@ function SettingsModalDialog({
           {provider !== 'NONE' && (
             <div className="space-y-1.5">
               <label className="block text-[11px] uppercase text-zinc-400">
-                {provider} API Anahtarı (Sadece LocalStorage içinde saklanır)
+                {provider} API Anahtarı
               </label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Ücretsiz API anahtarınızı yapıştırın..."
+                placeholder="API anahtarınızı yapıştırın..."
                 className="w-full bg-[#09090b] border border-[#27272a] focus:border-[#f59e0b] focus:outline-none px-3 py-2 text-xs font-mono text-zinc-100"
               />
             </div>
@@ -121,8 +139,7 @@ function SettingsModalDialog({
           <div className="flex items-start gap-2 border border-[#27272a] bg-[#18181b]/60 p-2.5 text-[11px] text-zinc-400">
             <ShieldAlert className="w-4 h-4 text-[#f59e0b] shrink-0 mt-0.5" strokeWidth={1.5} />
             <span>
-              API anahtarınız sunucuya gönderilmez, yalnızca tarayıcınızda saklanır. Rate-limit veya
-              ağ hatasında sistem otomatik olarak ETL / yerel veriye geri döner.
+              Tüm ayarlar yalnızca tarayıcınızdaki LocalStorage içinde saklanır.
             </span>
           </div>
         </div>

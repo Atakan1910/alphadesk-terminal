@@ -10,7 +10,14 @@ const STORAGE_KEYS = {
 } as const;
 
 const DEFAULT_WATCHLIST = ['THYAO', 'ASELS', 'TUPRS', 'KCHOL', 'BIMAS', 'AAPL', 'NVDA', 'MSFT'];
-const DEFAULT_API_SETTINGS: ApiSettings = { provider: 'NONE', apiKey: '' };
+// Cloudflare Worker adresini aldıktan sonra buraya yapıştırabilirsin (örn: 'https://alphadesk-proxy.xxx.workers.dev')
+export const DEFAULT_WORKER_URL = '';
+
+const DEFAULT_API_SETTINGS: ApiSettings = {
+  provider: 'NONE',
+  apiKey: '',
+  workerUrl: DEFAULT_WORKER_URL,
+};
 
 function readStorage<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
@@ -42,9 +49,14 @@ export function useTerminalStore() {
   const [portfolio, setPortfolio] = useState<PortfolioPosition[]>(() =>
     readStorage<PortfolioPosition[]>(STORAGE_KEYS.PORTFOLIO, [])
   );
-  const [apiSettings, setApiSettings] = useState<ApiSettings>(() =>
-    readStorage<ApiSettings>(STORAGE_KEYS.API_SETTINGS, DEFAULT_API_SETTINGS)
-  );
+  const [apiSettings, setApiSettings] = useState<ApiSettings>(() => {
+    const saved = readStorage<Partial<ApiSettings>>(STORAGE_KEYS.API_SETTINGS, {});
+    return {
+      provider: saved.provider ?? DEFAULT_API_SETTINGS.provider,
+      apiKey: saved.apiKey ?? DEFAULT_API_SETTINGS.apiKey,
+      workerUrl: saved.workerUrl?.trim() ? saved.workerUrl.trim() : DEFAULT_WORKER_URL,
+    };
+  });
   const [timeframe, setTimeframe] = useState<TimeframeKey>(() =>
     readStorage<TimeframeKey>(STORAGE_KEYS.TIMEFRAME, '6A')
   );

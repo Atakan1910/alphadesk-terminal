@@ -1,7 +1,12 @@
 export type MarketRegion = 'BIST' | 'GLOBAL';
 export type CurrencyCode = 'TRY' | 'USD';
 export type TimeframeKey = '1G' | '1H' | '1A' | '3A' | '6A' | '1Y';
-export type DataSourceMode = 'SEED' | 'PIPELINE_JSON' | 'LIVE_FINNHUB' | 'LIVE_ALPHAVANTAGE';
+export type DataSourceMode =
+  | 'SEED'
+  | 'PIPELINE_JSON'
+  | 'CLOUDFLARE_WORKER'
+  | 'LIVE_FINNHUB'
+  | 'LIVE_ALPHAVANTAGE';
 
 export interface OHLCVBar {
   time: string; // YYYY-MM-DD
@@ -319,7 +324,18 @@ export interface PortfolioPosition {
   addedAt: string;
 }
 
+export interface RemoteSearchItem {
+  symbol: string;
+  yfSymbol: string;
+  name: string;
+  exchange: string;
+  market: MarketRegion;
+  currency: CurrencyCode;
+  sector?: string;
+}
+
 export interface ApiSettings {
   provider: 'NONE' | 'FINNHUB' | 'ALPHAVANTAGE';
   apiKey: string;
+  workerUrl: string;
 }

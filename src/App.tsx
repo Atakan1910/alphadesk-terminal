@@ -28,7 +28,7 @@ import {
 } from './engine/fundamentalScoring';
 import { computeTechnicalSnapshot } from './engine/technicalIndicators';
 import { useTerminalStore } from './hooks/useTerminalStore';
-import type { MacroTicker, StockAsset } from './types/market';
+import type { MacroTicker, RemoteSearchItem, StockAsset } from './types/market';
 
 const DEFAULT_OVERLAYS: OverlayConfig = {
   ema9: false,
@@ -54,6 +54,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [apiWarning, setApiWarning] = useState<string | null>(null);
   const [liveOverride, setLiveOverride] = useState<StockAsset | null>(null);
+  const [loadingRemoteSymbol, setLoadingRemoteSymbol] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<TerminalTab>('CHART');
   const [labSubTab, setLabSubTab] = useState<'PORTFOLIO' | 'BACKTEST'>('PORTFOLIO');
@@ -163,6 +164,40 @@ export default function App() {
     [store]
   );
 
+  const handleLoadRemoteStock = useCallback(
+    async (item: RemoteSearchItem) => {
+      if (!store.apiSettings.workerUrl.trim()) return;
+      setLoadingRemoteSymbol(item.yfSymbol);
+      setApiWarning(null);
+
+      const fetched = await HybridMarketDataAdapter.fetchRemoteStock(
+        item.yfSymbol,
+        store.apiSettings.workerUrl,
+        item
+      );
+      setLoadingRemoteSymbol(null);
+
+      if (!fetched) {
+        setApiWarning(`${item.yfSymbol} verisi alınamadı. Sembolü veya Worker adresini kontrol edin.`);
+        return;
+      }
+
+      setAssets((prev) => {
+        const idx = prev.findIndex((a) => a.symbol === fetched.symbol);
+        if (idx >= 0) {
+          const copy = [...prev];
+          copy[idx] = fetched;
+          return copy;
+        }
+        return [fetched, ...prev];
+      });
+
+      store.setActiveSymbol(fetched.symbol);
+      setActiveTab('CHART');
+    },
+    [store]
+  );
+
   const toggleOverlay = (key: keyof OverlayConfig) => {
     setOverlays((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -202,8 +237,12 @@ export default function App() {
           assets={assets}
           activeSymbol={activeAsset.symbol}
           watchlist={store.watchlist}
+          workerUrl={store.apiSettings.workerUrl}
+          loadingRemoteSymbol={loadingRemoteSymbol}
           onSelectSymbol={store.setActiveSymbol}
+          onLoadRemoteStock={(item) => void handleLoadRemoteStock(item)}
           onToggleWatchlist={store.toggleWatchlist}
+          onOpenSettings={() => setSettingsOpen(true)}
           mobileOpen={mobileSidebarOpen}
           onCloseMobile={() => setMobileSidebarOpen(false)}
         />
