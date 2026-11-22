@@ -1,0 +1,41 @@
+name: Update Real Market Data (ETL Pipeline)
+
+on:
+  schedule:
+    # Hafta içi 16:15 UTC (BIST kapanış sonrası) ve 21:15 UTC (ABD kapanış sonrası)
+    - cron: "15 16 * * 1-5"
+    - cron: "15 21 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Fetch real BIST & Global data via yfinance
+        run: python scripts/fetch_market_data.py
+
+      - name: Commit updated market-data.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/market-data.json
+          if git diff --staged --quiet; then
+            echo "Veride değişiklik yok."
+          else
+            git commit -m "data: otomatik piyasa verisi güncellemesi"
+            git push
+          fi
