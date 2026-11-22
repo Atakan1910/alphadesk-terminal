@@ -10,8 +10,8 @@ const STORAGE_KEYS = {
 } as const;
 
 const DEFAULT_WATCHLIST = ['THYAO', 'ASELS', 'TUPRS', 'KCHOL', 'BIMAS', 'AAPL', 'NVDA', 'MSFT'];
-// Cloudflare Worker adresini aldıktan sonra buraya yapıştırabilirsin (örn: 'https://alphadesk-proxy.xxx.workers.dev')
-export const DEFAULT_WORKER_URL = '';
+// Cloudflare Worker adresi (Tüm BIST ve Dünya hisseleri için canlı proxy)
+export const DEFAULT_WORKER_URL = 'https://alphadesk-proxy.alphadesk-terminal.workers.dev';
 
 const DEFAULT_API_SETTINGS: ApiSettings = {
   provider: 'NONE',
