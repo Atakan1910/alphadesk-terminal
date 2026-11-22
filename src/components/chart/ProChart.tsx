@@ -12,16 +12,25 @@ import {
   type LogicalRange,
   type Time,
 } from 'lightweight-charts';
-import type { OHLCVBar, TechnicalSnapshot, TimeframeKey } from '../../types/market';
-import type { OverlayConfig } from './IndicatorToolbar';
+import { Star } from 'lucide-react';
+import type { OHLCVBar, StockAsset, TechnicalSnapshot, TimeframeKey } from '../../types/market';
+import {
+  IndicatorToolbar,
+  type OverlayConfig,
+  type SubChartKey,
+} from './IndicatorToolbar';
 
 interface ProChartProps {
-  symbol: string;
-  currency: string;
-  bars: OHLCVBar[];
+  asset: StockAsset;
   technical: TechnicalSnapshot;
   timeframe: TimeframeKey;
+  onTimeframeChange: (tf: TimeframeKey) => void;
   overlays: OverlayConfig;
+  onToggleOverlay: (key: keyof OverlayConfig) => void;
+  activeSubCharts: SubChartKey[];
+  onToggleSubChart: (key: SubChartKey) => void;
+  isWatched: boolean;
+  onToggleWatchlist: () => void;
   onVisibleRangeChange?: (range: LogicalRange | null) => void;
 }
 
@@ -46,12 +55,16 @@ function toLineData(bars: OHLCVBar[], values: (number | null)[]): LineData<Time>
 }
 
 export function ProChart({
-  symbol,
-  currency,
-  bars,
+  asset,
   technical,
   timeframe,
+  onTimeframeChange,
   overlays,
+  onToggleOverlay,
+  activeSubCharts,
+  onToggleSubChart,
+  isWatched,
+  onToggleWatchlist,
   onVisibleRangeChange,
 }: ProChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -65,6 +78,7 @@ export function ProChart({
   const [chartStyle, setChartStyle] = useState<'LINE' | 'CANDLE'>('LINE');
   const [hoveredBar, setHoveredBar] = useState<OHLCVBar | null>(null);
 
+  const bars = asset.bars;
   const barMap = useMemo(() => {
     const map = new Map<string, OHLCVBar>();
     for (const b of bars) map.set(b.time, b);
@@ -82,7 +96,7 @@ export function ProChart({
   const periodPct = basePrice > 0 ? (periodDiff / basePrice) * 100 : 0;
   const isPeriodUp = (lastBar?.close ?? 0) >= basePrice;
   const mainLineColor = isPeriodUp ? '#10b981' : '#f43f5e';
-  const currencySym = currency === 'TRY' ? '₺' : '$';
+  const currencySym = asset.currency === 'TRY' ? '₺' : '$';
 
   useEffect(() => {
     const container = containerRef.current;
@@ -90,10 +104,10 @@ export function ProChart({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 410,
+      height: 360,
       layout: {
         background: { type: ColorType.Solid, color: '#09090b' },
-        textColor: '#a1a1aa',
+        textColor: '#71717a',
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
         fontSize: 11,
       },
@@ -107,13 +121,13 @@ export function ProChart({
         horzLine: { color: '#52525b', width: 1, style: LineStyle.Dashed },
       },
       rightPriceScale: {
-        borderColor: '#27272a',
-        scaleMargins: { top: 0.1, bottom: 0.1 },
+        borderVisible: false,
+        scaleMargins: { top: 0.12, bottom: 0.12 },
       },
       timeScale: {
         borderColor: '#27272a',
         timeVisible: false,
-        rightOffset: 6,
+        rightOffset: 5,
       },
     });
 
@@ -145,15 +159,14 @@ export function ProChart({
       }));
       primarySeries.setData(closeData);
 
-      // Midas tarzı dönem başlangıç referans çizgisi
       if (periodStartBar) {
         primarySeries.createPriceLine({
           price: periodStartBar.close,
           color: '#3f3f46',
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `${timeframe} Başlangıç`,
+          axisLabelVisible: false,
+          title: '',
         });
       }
     } else {
@@ -222,10 +235,7 @@ export function ProChart({
           lineWidth: level.strength === 'STRONG' ? 2 : 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title:
-            level.type === 'RESISTANCE'
-              ? `Direnç (${level.touches})`
-              : `Destek (${level.touches})`,
+          title: level.type === 'RESISTANCE' ? 'Direnç' : 'Destek',
         });
       });
     }
@@ -248,7 +258,7 @@ export function ProChart({
 
     const total = bars.length;
     const from = Math.max(0, total - visibleCount);
-    const to = total + 4;
+    const to = total + 3;
     chart.timeScale().setVisibleLogicalRange({ from, to });
 
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -280,59 +290,101 @@ export function ProChart({
   }, [bars, technical, overlays, timeframe, barMap, chartStyle, mainLineColor, periodStartBar, visibleCount]);
 
   return (
-    <div className="relative bg-[#09090b] border-b border-[#27272a]">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-[#27272a] bg-[#111113]/90 text-xs font-mono tabular-nums">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-zinc-200 font-semibold">{symbol}</span>
+    <section className="border border-[#27272a] bg-[#09090b]">
+      {/* Midas / Robinhood Tipi Hero Fiyat Başlığı */}
+      <div className="px-5 pt-5 pb-3 flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-mono px-1.5 py-0.5 border border-[#27272a] bg-[#111113] text-zinc-300">
+              {asset.symbol}
+            </span>
+            <span className="text-xs text-zinc-500">
+              {asset.market === 'BIST' ? 'Borsa İstanbul' : 'Global Borsa'} · {asset.sector}
+            </span>
+          </div>
+
+          <h1 className="text-xl font-semibold text-zinc-100 tracking-tight">{asset.name}</h1>
+
           {displayBar && (
-            <>
-              <span className="text-zinc-500">{displayBar.time}</span>
-              <span className="text-zinc-100 font-semibold">
+            <div className="flex flex-wrap items-baseline gap-3 pt-1 font-mono tabular-nums">
+              <span className="text-3xl font-semibold text-zinc-100">
                 {currencySym}
                 {displayBar.close.toFixed(2)}
               </span>
-              <span className={periodDiff >= 0 ? 'text-[#10b981]' : 'text-[#f43f5e]'}>
-                {timeframe}: {periodDiff >= 0 ? '+' : ''}
+              <span
+                className={`text-sm font-medium ${
+                  periodDiff >= 0 ? 'text-[#10b981]' : 'text-[#f43f5e]'
+                }`}
+              >
+                {periodDiff >= 0 ? '+' : ''}
                 {periodDiff.toFixed(2)} ({periodPct >= 0 ? '+' : ''}
                 {periodPct.toFixed(2)}%)
               </span>
-              {chartStyle === 'CANDLE' && (
-                <span className="hidden md:inline text-[11px] text-zinc-500">
-                  A:{displayBar.open.toFixed(2)} · Y:{displayBar.high.toFixed(2)} · D:
-                  {displayBar.low.toFixed(2)}
-                </span>
-              )}
-            </>
+              <span className="text-xs text-zinc-500">
+                {hoveredBar ? hoveredBar.time : `Son ${timeframe}`}
+              </span>
+            </div>
           )}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center border border-[#27272a] bg-[#111113] p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setChartStyle('LINE')}
+              className={`px-2.5 py-1 transition-colors ${
+                chartStyle === 'LINE'
+                  ? 'bg-[#18181b] text-zinc-100 font-medium'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Çizgi
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartStyle('CANDLE')}
+              className={`px-2.5 py-1 transition-colors ${
+                chartStyle === 'CANDLE'
+                  ? 'bg-[#18181b] text-zinc-100 font-medium'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Mum
+            </button>
+          </div>
+
           <button
             type="button"
-            onClick={() => setChartStyle('LINE')}
-            className={`px-2 py-0.5 text-[11px] border transition-colors ${
-              chartStyle === 'LINE'
-                ? 'border-[#f59e0b] bg-[#18181b] text-zinc-100'
-                : 'border-[#27272a] bg-[#09090b] text-zinc-500 hover:text-zinc-300'
+            onClick={onToggleWatchlist}
+            className={`flex items-center gap-1.5 px-3 py-1.5 border text-xs transition-colors ${
+              isWatched
+                ? 'border-[#f59e0b]/50 bg-[#18181b] text-[#f59e0b]'
+                : 'border-[#27272a] bg-[#111113] text-zinc-300 hover:border-zinc-500'
             }`}
           >
-            Çizgi
-          </button>
-          <button
-            type="button"
-            onClick={() => setChartStyle('CANDLE')}
-            className={`px-2 py-0.5 text-[11px] border transition-colors ${
-              chartStyle === 'CANDLE'
-                ? 'border-[#f59e0b] bg-[#18181b] text-zinc-100'
-                : 'border-[#27272a] bg-[#09090b] text-zinc-500 hover:text-zinc-300'
-            }`}
-          >
-            Mum
+            <Star
+              className={`w-3.5 h-3.5 ${isWatched ? 'fill-[#f59e0b]' : ''}`}
+              strokeWidth={1.5}
+            />
+            <span>{isWatched ? 'Takipte' : 'Takip Et'}</span>
           </button>
         </div>
       </div>
 
-      <div ref={containerRef} className="w-full h-[410px]" />
-    </div>
+      {/* Temiz Grafik Alanı */}
+      <div ref={containerRef} className="w-full h-[360px]" />
+
+      {/* Grafiğin Hemen Altında Vade Seçici + Gösterge Açılır Menüleri */}
+      <div className="border-t border-[#27272a]">
+        <IndicatorToolbar
+          timeframe={timeframe}
+          onTimeframeChange={onTimeframeChange}
+          overlays={overlays}
+          onToggleOverlay={onToggleOverlay}
+          activeSubCharts={activeSubCharts}
+          onToggleSubChart={onToggleSubChart}
+        />
+      </div>
+    </section>
   );
 }

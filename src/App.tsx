@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LogicalRange } from 'lightweight-charts';
-import { AlertTriangle, Briefcase, FlaskConical, Newspaper, Star } from 'lucide-react';
+import { AlertTriangle, Newspaper } from 'lucide-react';
 import { DcfCalculator } from './components/analysis/DcfCalculator';
 import { FundamentalXRay } from './components/analysis/FundamentalXRay';
 import { TechnicalConsensus } from './components/analysis/TechnicalConsensus';
-import {
-  IndicatorToolbar,
-  type OverlayConfig,
-  type SubChartKey,
-} from './components/chart/IndicatorToolbar';
+import type { OverlayConfig, SubChartKey } from './components/chart/IndicatorToolbar';
 import { ProChart } from './components/chart/ProChart';
 import { SubChartPanel } from './components/chart/SubChartPanel';
 import { MultiHorizonForecast } from './components/forecast/MultiHorizonForecast';
 import { SettingsModal } from './components/layout/SettingsModal';
 import { SidebarWatchlist } from './components/layout/SidebarWatchlist';
-import { TopTicker, type TerminalTab } from './components/layout/TopTicker';
+import { StockStatsRail } from './components/layout/StockStatsRail';
+import { TopTicker, type WorkspaceMode } from './components/layout/TopTicker';
 import { BacktestLab } from './components/portfolio/BacktestLab';
 import { PortfolioRiskPanel } from './components/portfolio/PortfolioRiskPanel';
 import { ScreenerHeatmap } from './components/portfolio/ScreenerHeatmap';
@@ -29,6 +26,15 @@ import {
 import { computeTechnicalSnapshot } from './engine/technicalIndicators';
 import { useTerminalStore } from './hooks/useTerminalStore';
 import type { MacroTicker, RemoteSearchItem, StockAsset } from './types/market';
+
+type StockSubTab = 'OVERVIEW' | 'FUNDAMENTALS' | 'FORECAST' | 'BACKTEST';
+
+const STOCK_SUB_TABS: { id: StockSubTab; label: string }[] = [
+  { id: 'OVERVIEW', label: 'Genel Bakış & Teknik' },
+  { id: 'FUNDAMENTALS', label: 'Finansallar & DCF' },
+  { id: 'FORECAST', label: 'Fiyat Tahmini' },
+  { id: 'BACKTEST', label: 'Strateji Testi' },
+];
 
 const DEFAULT_OVERLAYS: OverlayConfig = {
   ema9: false,
@@ -56,10 +62,12 @@ export default function App() {
   const [liveOverride, setLiveOverride] = useState<StockAsset | null>(null);
   const [loadingRemoteSymbol, setLoadingRemoteSymbol] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<TerminalTab>('CHART');
-  const [labSubTab, setLabSubTab] = useState<'PORTFOLIO' | 'BACKTEST'>('PORTFOLIO');
+  const [workspace, setWorkspace] = useState<WorkspaceMode>('STOCK');
+  const [stockSubTab, setStockSubTab] = useState<StockSubTab>('OVERVIEW');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 1280 : false
+  );
 
   const [overlays, setOverlays] = useState<OverlayConfig>(DEFAULT_OVERLAYS);
   const [subCharts, setSubCharts] = useState<SubChartKey[]>([]);
@@ -67,13 +75,6 @@ export default function App() {
 
   const loadUniverse = useCallback(async (forceRefresh = false) => {
     setIsLoading(true);
-    if (forceRefresh) {
-      try {
-        await fetch('/api/run-etl', { method: 'POST' });
-      } catch {
-        // Statik sunucuda veya dev server dışındaysa hata fırlatmadan devam et
-      }
-    }
     const result = await HybridMarketDataAdapter.loadAllAssets(forceRefresh);
     setAssets(result.assets);
     setTickers(result.macro);
@@ -97,12 +98,12 @@ export default function App() {
     };
   }, []);
 
-  const hasLiveApi =
+  const isApiConfigured =
     store.apiSettings.provider !== 'NONE' && Boolean(store.apiSettings.apiKey.trim());
 
   useEffect(() => {
     let active = true;
-    if (!hasLiveApi) {
+    if (!isApiConfigured) {
       return;
     }
 
@@ -115,16 +116,14 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [store.activeSymbol, store.apiSettings, hasLiveApi]);
+  }, [store.activeSymbol, store.apiSettings, isApiConfigured]);
 
   const activeAsset = useMemo(() => {
-    if (hasLiveApi && liveOverride && liveOverride.symbol === store.activeSymbol) {
+    if (isApiConfigured && liveOverride && liveOverride.symbol === store.activeSymbol) {
       return liveOverride;
     }
     return assets.find((a) => a.symbol === store.activeSymbol) ?? assets[0];
-  }, [assets, hasLiveApi, liveOverride, store.activeSymbol]);
-
-  const activeApiWarning = hasLiveApi ? apiWarning : null;
+  }, [assets, liveOverride, store.activeSymbol, isApiConfigured]);
 
   const technical = useMemo(
     () => computeTechnicalSnapshot(activeAsset.bars),
@@ -156,10 +155,15 @@ export default function App() {
     return found && found.price > 0 ? found.price : 36.42;
   }, [tickers]);
 
-  const handleJumpToStock = useCallback(
+  const activePosition = useMemo(
+    () => store.portfolio.find((p) => p.symbol === activeAsset.symbol),
+    [store.portfolio, activeAsset.symbol]
+  );
+
+  const handleSelectStock = useCallback(
     (symbol: string) => {
       store.setActiveSymbol(symbol);
-      setActiveTab('CHART');
+      setWorkspace('STOCK');
     },
     [store]
   );
@@ -169,7 +173,6 @@ export default function App() {
       if (!store.apiSettings.workerUrl.trim()) return;
       setLoadingRemoteSymbol(item.yfSymbol);
       setApiWarning(null);
-
       const fetched = await HybridMarketDataAdapter.fetchRemoteStock(
         item.yfSymbol,
         store.apiSettings.workerUrl,
@@ -178,7 +181,9 @@ export default function App() {
       setLoadingRemoteSymbol(null);
 
       if (!fetched) {
-        setApiWarning(`${item.yfSymbol} verisi alınamadı. Sembolü veya Worker adresini kontrol edin.`);
+        setApiWarning(
+          `${item.yfSymbol} verisi alınamadı. Sembolü veya Cloudflare Worker adresini kontrol edin.`
+        );
         return;
       }
 
@@ -191,9 +196,9 @@ export default function App() {
         }
         return [fetched, ...prev];
       });
-
       store.setActiveSymbol(fetched.symbol);
-      setActiveTab('CHART');
+      setWorkspace('STOCK');
+      setStockSubTab('OVERVIEW');
     },
     [store]
   );
@@ -208,28 +213,26 @@ export default function App() {
     );
   };
 
-  const lastBar = activeAsset.bars[activeAsset.bars.length - 1];
-  const prevBar = activeAsset.bars[activeAsset.bars.length - 2] ?? lastBar;
-  const dailyDiff = lastBar.close - prevBar.close;
-  const dailyPct = prevBar.close > 0 ? (dailyDiff / prevBar.close) * 100 : 0;
   const isWatched = store.watchlist.includes(activeAsset.symbol);
-  const currencySymbol = activeAsset.currency === 'TRY' ? '₺' : '$';
-
-  const showStockHeader = activeTab !== 'SCREENER';
 
   return (
     <div className="h-screen flex flex-col bg-[#09090b] text-zinc-100 overflow-hidden">
       <TopTicker
         tickers={tickers}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        pipelineActive={pipelineActive}
+        assets={assets}
+        workspace={workspace}
+        onWorkspaceChange={setWorkspace}
         activeDataSource={activeAsset.dataSource}
         generatedAt={generatedAt}
+        workerUrl={store.apiSettings.workerUrl}
+        loadingRemoteSymbol={loadingRemoteSymbol}
         isLoading={isLoading}
+        sidebarVisible={sidebarVisible}
+        onToggleSidebar={() => setSidebarVisible((v) => !v)}
+        onSelectSymbol={handleSelectStock}
+        onLoadRemoteStock={(item) => void handleLoadRemoteStock(item)}
         onRefresh={() => void loadUniverse(true)}
         onOpenSettings={() => setSettingsOpen(true)}
-        onToggleMobileSidebar={() => setMobileSidebarOpen(true)}
       />
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -237,285 +240,177 @@ export default function App() {
           assets={assets}
           activeSymbol={activeAsset.symbol}
           watchlist={store.watchlist}
-          workerUrl={store.apiSettings.workerUrl}
-          loadingRemoteSymbol={loadingRemoteSymbol}
-          onSelectSymbol={store.setActiveSymbol}
-          onLoadRemoteStock={(item) => void handleLoadRemoteStock(item)}
+          visible={sidebarVisible}
+          onSelectSymbol={handleSelectStock}
           onToggleWatchlist={store.toggleWatchlist}
-          onOpenSettings={() => setSettingsOpen(true)}
-          mobileOpen={mobileSidebarOpen}
-          onCloseMobile={() => setMobileSidebarOpen(false)}
+          onClose={() => setSidebarVisible(false)}
         />
 
-        <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-          {/* Ferah Hisse Başlığı + 3 Hızlı Özet Kartı */}
-          {showStockHeader && (
-            <div className="px-5 py-4 border-b border-[#27272a] bg-[#111113] space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => store.toggleWatchlist(activeAsset.symbol)}
-                    className="p-2 border border-[#27272a] bg-[#09090b] hover:border-[#f59e0b]"
-                    title={isWatched ? 'Favorilerden çıkar' : 'Favorilere ekle'}
-                  >
-                    <Star
-                      className={`w-4 h-4 ${
-                        isWatched ? 'fill-[#f59e0b] text-[#f59e0b]' : 'text-zinc-500'
-                      }`}
-                      strokeWidth={1.5}
-                    />
-                  </button>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h1 className="text-lg font-mono font-semibold text-zinc-100">
-                        {activeAsset.symbol}
-                      </h1>
-                      <span className="text-sm text-zinc-300">{activeAsset.name}</span>
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-0.5">
-                      {activeAsset.market === 'BIST' ? 'Borsa İstanbul' : 'ABD Borsası'} ·{' '}
-                      {activeAsset.sector} · Son veri: {activeAsset.lastUpdated}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-right font-mono tabular-nums">
-                  <div className="text-2xl font-semibold text-zinc-100">
-                    {currencySymbol}
-                    {lastBar.close.toFixed(2)}
-                  </div>
-                  <div
-                    className={`text-xs mt-0.5 ${
-                      dailyPct >= 0 ? 'text-[#10b981]' : 'text-[#f43f5e]'
-                    }`}
-                  >
-                    {dailyDiff >= 0 ? '+' : ''}
-                    {dailyDiff.toFixed(2)} ({dailyPct >= 0 ? '+' : ''}
-                    {dailyPct.toFixed(2)}%)
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('CHART')}
-                  className="text-left border border-[#27272a] bg-[#09090b] hover:border-zinc-500 px-3.5 py-2.5 transition-colors"
-                >
-                  <div className="text-[11px] text-zinc-500">Teknik Görünüm</div>
-                  <div className="mt-1 flex items-baseline justify-between font-mono tabular-nums">
-                    <span
-                      className={`text-sm font-semibold ${
-                        technical.consensusScore >= 58
-                          ? 'text-[#10b981]'
-                          : technical.consensusScore <= 42
-                            ? 'text-[#f43f5e]'
-                            : 'text-[#f59e0b]'
-                      }`}
-                    >
-                      {technical.rating}
-                    </span>
-                    <span className="text-xs text-zinc-400">{technical.consensusScore}/100</span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('FUNDAMENTALS')}
-                  className="text-left border border-[#27272a] bg-[#09090b] hover:border-zinc-500 px-3.5 py-2.5 transition-colors"
-                >
-                  <div className="text-[11px] text-zinc-500">Şirket Sağlığı & Değerleme</div>
-                  <div className="mt-1 flex items-baseline justify-between font-mono tabular-nums">
-                    <span className="text-sm font-semibold text-zinc-100">
-                      {activeAsset.quarters.length > 0
-                        ? `F-Score ${fundamental.piotroski.score}/9 (${fundamental.piotroski.grade})`
-                        : 'Bilanço Yok'}
-                    </span>
-                    <span className="text-xs text-zinc-400">
-                      {fundamental.pe ? `F/K ${fundamental.pe}x` : 'Detay →'}
-                    </span>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('FORECAST')}
-                  className="text-left border border-[#27272a] bg-[#09090b] hover:border-zinc-500 px-3.5 py-2.5 transition-colors"
-                >
-                  <div className="text-[11px] text-zinc-500">12 Aylık İstatistiksel Medyan</div>
-                  <div className="mt-1 flex items-baseline justify-between font-mono tabular-nums">
-                    <span className="text-sm font-semibold text-[#f59e0b]">
-                      {currencySymbol}
-                      {forecast.longTerm.baseTarget12M.toFixed(2)}
-                    </span>
-                    <span className="text-xs text-zinc-400">
-                      T+1 Yön: %{forecast.daily.bullishProbabilityPct}
-                    </span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeApiWarning && (
+        <main className="flex-1 min-w-0 overflow-y-auto">
+          {apiWarning && (
             <div className="flex items-center gap-2 px-5 py-2 bg-[#f59e0b]/10 border-b border-[#f59e0b]/30 text-xs text-[#f59e0b]">
               <AlertTriangle className="w-4 h-4 shrink-0" strokeWidth={1.5} />
-              <span>{activeApiWarning}</span>
+              <span>{apiWarning}</span>
             </div>
           )}
 
-          {/* SEKME 1: GRAFİK & TEKNİK ANALİZ */}
-          {activeTab === 'CHART' && (
-            <div className="flex-1 flex flex-col">
-              <IndicatorToolbar
-                timeframe={store.timeframe}
-                onTimeframeChange={store.setTimeframe}
-                overlays={overlays}
-                onToggleOverlay={toggleOverlay}
-                activeSubCharts={subCharts}
-                onToggleSubChart={toggleSubChart}
-              />
+          {/* ÇALIŞMA ALANI 1: HİSSE DETAY (2 SÜTUNLU ERGONOMİK DÜZEN) */}
+          {workspace === 'STOCK' && (
+            <div className="max-w-[1440px] mx-auto p-4 lg:p-6">
+              <div className="flex flex-col xl:flex-row items-start gap-6">
+                {/* Sol / Ana İçerik Akışı */}
+                <div className="flex-1 min-w-0 w-full space-y-5">
+                  <ProChart
+                    asset={activeAsset}
+                    technical={technical}
+                    timeframe={store.timeframe}
+                    onTimeframeChange={store.setTimeframe}
+                    overlays={overlays}
+                    onToggleOverlay={toggleOverlay}
+                    activeSubCharts={subCharts}
+                    onToggleSubChart={toggleSubChart}
+                    isWatched={isWatched}
+                    onToggleWatchlist={() => store.toggleWatchlist(activeAsset.symbol)}
+                    onVisibleRangeChange={setSyncedRange}
+                  />
 
-              <ProChart
-                symbol={activeAsset.symbol}
-                currency={activeAsset.currency}
-                bars={activeAsset.bars}
-                technical={technical}
-                timeframe={store.timeframe}
-                overlays={overlays}
-                onVisibleRangeChange={setSyncedRange}
-              />
-
-              {subCharts.map((sc) => (
-                <SubChartPanel
-                  key={sc}
-                  type={sc}
-                  bars={activeAsset.bars}
-                  technical={technical}
-                  visibleRange={syncedRange}
-                />
-              ))}
-
-              <div className="p-5 space-y-5 max-w-6xl w-full mx-auto">
-                <TechnicalConsensus technical={technical} />
-
-                {activeAsset.news.length > 0 && (
-                  <section className="border border-[#27272a] bg-[#111113] p-5 space-y-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-                      <Newspaper className="w-4 h-4 text-zinc-400" strokeWidth={1.5} />
-                      <span>Öne Çıkan KAP & Haber Katalizörleri</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {activeAsset.news.map((item) => (
-                        <div
-                          key={item.id}
-                          className="border border-[#27272a] bg-[#09090b] p-3 space-y-1.5"
-                        >
-                          <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500">
-                            <span>
-                              {item.source} · {item.date}
-                            </span>
-                            <span
-                              className={
-                                item.impact === 'POSITIVE'
-                                  ? 'text-[#10b981]'
-                                  : item.impact === 'NEGATIVE'
-                                    ? 'text-[#f43f5e]'
-                                    : 'text-zinc-400'
-                              }
-                            >
-                              {item.impact === 'POSITIVE'
-                                ? 'Olumlu'
-                                : item.impact === 'NEGATIVE'
-                                  ? 'Olumsuz'
-                                  : 'Nötr'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-zinc-300 leading-relaxed">{item.title}</p>
-                        </div>
+                  {subCharts.length > 0 && (
+                    <div className="border-x border-t border-[#27272a]">
+                      {subCharts.map((sc) => (
+                        <SubChartPanel
+                          key={sc}
+                          type={sc}
+                          bars={activeAsset.bars}
+                          technical={technical}
+                          visibleRange={syncedRange}
+                        />
                       ))}
                     </div>
-                  </section>
-                )}
-              </div>
-            </div>
-          )}
+                  )}
 
-          {/* SEKME 2: ŞİRKET RÖNTGENİ & TEMEL ANALİZ */}
-          {activeTab === 'FUNDAMENTALS' && (
-            <div className="p-5 space-y-5 max-w-6xl w-full mx-auto">
-              <FundamentalXRay asset={activeAsset} metrics={fundamental} />
-              <DcfCalculator key={activeAsset.symbol} asset={activeAsset} />
-            </div>
-          )}
+                  {/* Hisse İçi Bağlamsal Alt Sekmeler (Underline Stili) */}
+                  <div className="border-b border-[#27272a] flex items-center gap-6 overflow-x-auto">
+                    {STOCK_SUB_TABS.map((tab) => {
+                      const active = stockSubTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setStockSubTab(tab.id)}
+                          className={`pb-3 text-xs whitespace-nowrap border-b-2 transition-colors ${
+                            active
+                              ? 'border-[#f59e0b] text-zinc-100 font-medium'
+                              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-          {/* SEKME 3: TAHMİN MERKEZİ */}
-          {activeTab === 'FORECAST' && (
-            <div className="p-5 max-w-6xl w-full mx-auto">
-              <MultiHorizonForecast
-                asset={activeAsset}
-                forecast={forecast}
-                dcfIntrinsic={
-                  activeAsset.quarters.length > 0 ? dcf.intrinsicValuePerShare : undefined
-                }
-              />
-            </div>
-          )}
+                  {/* Alt Sekme İçerikleri */}
+                  {stockSubTab === 'OVERVIEW' && (
+                    <div className="space-y-5">
+                      <TechnicalConsensus technical={technical} />
 
-          {/* SEKME 4: TARAYICI & SEKTÖR ISI HARİTASI */}
-          {activeTab === 'SCREENER' && (
-            <div className="p-5 max-w-7xl w-full mx-auto">
-              <ScreenerHeatmap assets={assets} onSelectStock={handleJumpToStock} />
-            </div>
-          )}
+                      {activeAsset.news.length > 0 && (
+                        <section className="border border-[#27272a] bg-[#111113] p-5 space-y-3">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
+                            <Newspaper className="w-4 h-4 text-zinc-400" strokeWidth={1.5} />
+                            <span>KAP & Haber Akışı</span>
+                          </div>
+                          <div className="divide-y divide-[#27272a]/70">
+                            {activeAsset.news.map((item) => (
+                              <div key={item.id} className="py-3 first:pt-0 last:pb-0 space-y-1">
+                                <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500">
+                                  <span>
+                                    {item.source} · {item.date}
+                                  </span>
+                                  <span
+                                    className={
+                                      item.impact === 'POSITIVE'
+                                        ? 'text-[#10b981]'
+                                        : item.impact === 'NEGATIVE'
+                                          ? 'text-[#f43f5e]'
+                                          : 'text-zinc-400'
+                                    }
+                                  >
+                                    {item.impact === 'POSITIVE'
+                                      ? 'Olumlu'
+                                      : item.impact === 'NEGATIVE'
+                                        ? 'Olumsuz'
+                                        : 'Nötr'}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-zinc-300 leading-relaxed">
+                                  {item.title}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      )}
+                    </div>
+                  )}
 
-          {/* SEKME 5: BACKTEST & PORTFÖY RİSK LABORATUVARI */}
-          {activeTab === 'PORTFOLIO' && (
-            <div className="p-5 space-y-4 max-w-6xl w-full mx-auto">
-              <div className="flex items-center gap-2 border-b border-[#27272a] pb-3">
-                <button
-                  type="button"
-                  onClick={() => setLabSubTab('PORTFOLIO')}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 text-xs border transition-colors ${
-                    labSubTab === 'PORTFOLIO'
-                      ? 'border-[#f59e0b] bg-[#18181b] text-zinc-100 font-medium'
-                      : 'border-[#27272a] bg-[#111113] text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <Briefcase className="w-3.5 h-3.5" strokeWidth={1.5} />
-                  <span>Sanal Portföy & Risk ({store.portfolio.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLabSubTab('BACKTEST')}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 text-xs border transition-colors ${
-                    labSubTab === 'BACKTEST'
-                      ? 'border-[#f59e0b] bg-[#18181b] text-zinc-100 font-medium'
-                      : 'border-[#27272a] bg-[#111113] text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <FlaskConical className="w-3.5 h-3.5" strokeWidth={1.5} />
-                  <span>Strateji Backtest ({activeAsset.symbol})</span>
-                </button>
-              </div>
+                  {stockSubTab === 'FUNDAMENTALS' && (
+                    <div className="space-y-5">
+                      <FundamentalXRay asset={activeAsset} metrics={fundamental} />
+                      <DcfCalculator key={activeAsset.symbol} asset={activeAsset} />
+                    </div>
+                  )}
 
-              {labSubTab === 'PORTFOLIO' ? (
-                <PortfolioRiskPanel
-                  assets={assets}
-                  positions={store.portfolio}
-                  usdTryRate={usdTryRate}
+                  {stockSubTab === 'FORECAST' && (
+                    <MultiHorizonForecast
+                      asset={activeAsset}
+                      forecast={forecast}
+                      dcfIntrinsic={
+                        activeAsset.quarters.length > 0 ? dcf.intrinsicValuePerShare : undefined
+                      }
+                    />
+                  )}
+
+                  {stockSubTab === 'BACKTEST' && <BacktestLab asset={activeAsset} />}
+                </div>
+
+                {/* Sağ İstatistik, Aralık & Hızlı Portföy Sütunu */}
+                <StockStatsRail
+                  asset={activeAsset}
+                  technical={technical}
+                  fundamental={fundamental}
+                  forecast={forecast}
+                  position={activePosition}
                   onAddPosition={store.addPosition}
-                  onRemovePosition={store.removePosition}
-                  onClearPortfolio={store.clearPortfolio}
-                  onLoadSample={() => store.loadSamplePortfolio(assets)}
-                  onExportJson={store.exportPortfolioJson}
-                  onImportJson={store.importPortfolioJson}
-                  onSelectStock={handleJumpToStock}
+                  onNavigateSubTab={setStockSubTab}
+                  onOpenPortfolio={() => setWorkspace('PORTFOLIO')}
                 />
-              ) : (
-                <BacktestLab asset={activeAsset} />
-              )}
+              </div>
+            </div>
+          )}
+
+          {/* ÇALIŞMA ALANI 2: PİYASA TARAYICI & ISI HARİTASI */}
+          {workspace === 'MARKET' && (
+            <div className="max-w-[1440px] mx-auto p-4 lg:p-6">
+              <ScreenerHeatmap assets={assets} onSelectStock={handleSelectStock} />
+            </div>
+          )}
+
+          {/* ÇALIŞMA ALANI 3: PORTFÖY & RİSK PANELİ */}
+          {workspace === 'PORTFOLIO' && (
+            <div className="max-w-6xl mx-auto p-4 lg:p-6">
+              <PortfolioRiskPanel
+                assets={assets}
+                positions={store.portfolio}
+                usdTryRate={usdTryRate}
+                onAddPosition={store.addPosition}
+                onRemovePosition={store.removePosition}
+                onClearPortfolio={store.clearPortfolio}
+                onLoadSample={() => store.loadSamplePortfolio(assets)}
+                onExportJson={store.exportPortfolioJson}
+                onImportJson={store.importPortfolioJson}
+                onSelectStock={handleSelectStock}
+              />
             </div>
           )}
         </main>

@@ -1,73 +1,80 @@
 import {
   Activity,
-  BarChart2,
   Briefcase,
-  Cpu,
   LayoutGrid,
-  Menu,
-  Radio,
+  LineChart,
+  PanelLeft,
   RefreshCw,
   Settings,
-  ShieldCheck,
 } from 'lucide-react';
-import type { DataSourceMode, MacroTicker } from '../../types/market';
+import type { DataSourceMode, MacroTicker, RemoteSearchItem, StockAsset } from '../../types/market';
+import { CommandSearch } from './CommandSearch';
 
-export type TerminalTab = 'CHART' | 'FUNDAMENTALS' | 'FORECAST' | 'SCREENER' | 'PORTFOLIO';
+export type WorkspaceMode = 'STOCK' | 'MARKET' | 'PORTFOLIO';
 
 interface TopTickerProps {
   tickers: MacroTicker[];
-  activeTab: TerminalTab;
-  onTabChange: (tab: TerminalTab) => void;
-  pipelineActive: boolean;
+  assets: StockAsset[];
+  workspace: WorkspaceMode;
+  onWorkspaceChange: (mode: WorkspaceMode) => void;
   activeDataSource: DataSourceMode;
   generatedAt: string | null;
+  workerUrl: string;
+  loadingRemoteSymbol: string | null;
   isLoading: boolean;
+  sidebarVisible: boolean;
+  onToggleSidebar: () => void;
+  onSelectSymbol: (symbol: string) => void;
+  onLoadRemoteStock: (item: RemoteSearchItem) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
-  onToggleMobileSidebar: () => void;
 }
 
-const NAV_TABS: { id: TerminalTab; label: string; icon: typeof BarChart2 }[] = [
-  { id: 'CHART', label: 'Grafik & Teknik', icon: BarChart2 },
-  { id: 'FUNDAMENTALS', label: 'Şirket Röntgeni', icon: ShieldCheck },
-  { id: 'FORECAST', label: 'Tahmin Merkezi', icon: Cpu },
-  { id: 'SCREENER', label: 'Tarayıcı & Isı Haritası', icon: LayoutGrid },
-  { id: 'PORTFOLIO', label: 'Backtest & Portföy', icon: Briefcase },
+const WORKSPACES: { id: WorkspaceMode; label: string; icon: typeof LineChart }[] = [
+  { id: 'STOCK', label: 'Hisse', icon: LineChart },
+  { id: 'MARKET', label: 'Piyasa', icon: LayoutGrid },
+  { id: 'PORTFOLIO', label: 'Portföy', icon: Briefcase },
 ];
-
-function formatShortUtc(iso: string | null): string {
-  if (!iso) return 'Yerel';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.slice(0, 16);
-  return `${d.toISOString().slice(5, 16).replace('T', ' ')} UTC`;
-}
 
 export function TopTicker({
   tickers,
-  activeTab,
-  onTabChange,
-  pipelineActive,
+  assets,
+  workspace,
+  onWorkspaceChange,
   activeDataSource,
   generatedAt,
+  workerUrl,
+  loadingRemoteSymbol,
   isLoading,
+  sidebarVisible,
+  onToggleSidebar,
+  onSelectSymbol,
+  onLoadRemoteStock,
   onRefresh,
   onOpenSettings,
-  onToggleMobileSidebar,
 }: TopTickerProps) {
   const isLive = activeDataSource !== 'SEED';
+  const sourceLabel =
+    activeDataSource === 'CLOUDFLARE_WORKER'
+      ? 'Canlı Proxy'
+      : activeDataSource === 'PIPELINE_JSON'
+        ? 'Gerçek Veri'
+        : activeDataSource === 'SEED'
+          ? 'Yerel Yedek'
+          : 'Canlı API';
 
   return (
     <header className="border-b border-[#27272a] bg-[#111113] shrink-0">
-      {/* Üst Makro Ticker Şeridi */}
-      <div className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-[#27272a] bg-[#09090b] overflow-x-auto">
-        <div className="flex items-center gap-4 shrink-0">
+      {/* İnce Makro Endeks Bandı */}
+      <div className="flex items-center justify-between gap-4 px-4 py-1.5 border-b border-[#27272a]/80 bg-[#09090b] overflow-x-auto">
+        <div className="flex items-center gap-5 shrink-0">
           {tickers.map((t) => (
             <div
               key={t.symbol}
-              className="flex items-center gap-2 text-[11px] font-mono tabular-nums whitespace-nowrap"
+              className="flex items-center gap-1.5 text-[11px] font-mono tabular-nums whitespace-nowrap"
             >
-              <span className="text-zinc-500 uppercase tracking-wide">{t.label}</span>
-              <span className="text-zinc-200 font-medium">
+              <span className="text-zinc-500">{t.label}</span>
+              <span className="text-zinc-200">
                 {t.prefix ?? ''}
                 {t.price.toLocaleString('tr-TR', {
                   minimumFractionDigits: 2,
@@ -82,91 +89,105 @@ export function TopTicker({
           ))}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <div
-            className={`hidden sm:flex items-center gap-1.5 px-2 py-0.5 border text-[10px] font-mono tabular-nums ${
-              isLive
-                ? 'border-[#10b981]/40 bg-[#10b981]/10 text-[#10b981]'
-                : 'border-[#f59e0b]/40 bg-[#f59e0b]/10 text-[#f59e0b]'
+        <div className="hidden md:flex items-center gap-2 text-[11px] font-mono tabular-nums text-zinc-500 shrink-0">
+          <span
+            className={`w-1.5 h-1.5 ${isLive ? 'bg-[#10b981]' : 'bg-[#f59e0b]'}`}
+            title={generatedAt ?? undefined}
+          />
+          <span className={isLive ? 'text-zinc-300' : 'text-[#f59e0b]'}>{sourceLabel}</span>
+          {generatedAt && activeDataSource === 'PIPELINE_JSON' && (
+            <span className="text-zinc-600">· {generatedAt.slice(0, 10)}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Ana Ergonomik Üst Bar */}
+      <div className="flex items-center justify-between gap-3 px-4 h-14">
+        {/* Sol: Liste Toggle + Marka */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title={sidebarVisible ? 'Hisse Listesini Gizle' : 'Hisse Listesini Göster'}
+            className={`p-2 border transition-colors ${
+              sidebarVisible
+                ? 'border-zinc-600 bg-[#18181b] text-zinc-100'
+                : 'border-[#27272a] bg-[#09090b] text-zinc-400 hover:text-zinc-100'
             }`}
           >
-            <Radio className="w-3 h-3" strokeWidth={1.5} />
-            <span>
-              {activeDataSource}
-              {pipelineActive && activeDataSource === 'PIPELINE_JSON'
-                ? ` · ${formatShortUtc(generatedAt)}`
-                : ''}
+            <PanelLeft className="w-4 h-4" strokeWidth={1.5} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onWorkspaceChange('STOCK')}
+            className="flex items-center gap-2 text-left"
+          >
+            <Activity className="w-4 h-4 text-[#f59e0b]" strokeWidth={1.5} />
+            <span className="text-sm font-semibold tracking-wider uppercase text-zinc-100 hidden sm:inline">
+              AlphaDesk
             </span>
-          </div>
+          </button>
+        </div>
+
+        {/* Merkez: Global Komut Arama (Ctrl+K) */}
+        <CommandSearch
+          assets={assets}
+          workerUrl={workerUrl}
+          loadingRemoteSymbol={loadingRemoteSymbol}
+          onSelectSymbol={onSelectSymbol}
+          onLoadRemoteStock={onLoadRemoteStock}
+          onOpenSettings={onOpenSettings}
+        />
+
+        {/* Sağ: 3 Temiz Çalışma Alanı + Araçlar */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <nav className="flex items-center border border-[#27272a] bg-[#09090b] p-0.5">
+            {WORKSPACES.map((item) => {
+              const Icon = item.icon;
+              const active = workspace === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onWorkspaceChange(item.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${
+                    active
+                      ? 'bg-[#18181b] text-zinc-100 font-medium'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Icon
+                    className={`w-3.5 h-3.5 ${active ? 'text-[#f59e0b]' : 'text-zinc-500'}`}
+                    strokeWidth={1.5}
+                  />
+                  <span className="hidden sm:inline">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
           <button
             type="button"
             onClick={onRefresh}
             disabled={isLoading}
-            title="Veriyi Yenile"
-            className="p-1 border border-[#27272a] bg-[#111113] hover:border-zinc-500 text-zinc-300 disabled:opacity-50"
+            title="Verileri Yenile"
+            className="p-2 border border-[#27272a] bg-[#09090b] hover:border-zinc-500 text-zinc-400 hover:text-zinc-100 disabled:opacity-50"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
+              strokeWidth={1.5}
+            />
           </button>
           <button
             type="button"
             onClick={onOpenSettings}
-            title="API & Veri Ayarları"
-            className="flex items-center gap-1.5 px-2 py-1 border border-[#27272a] bg-[#111113] hover:border-zinc-500 text-[11px] text-zinc-300"
+            title="Proxy ve Veri Ayarları"
+            className="p-2 border border-[#27272a] bg-[#09090b] hover:border-zinc-500 text-zinc-400 hover:text-zinc-100"
           >
             <Settings className="w-3.5 h-3.5" strokeWidth={1.5} />
-            <span className="hidden md:inline">Ayarlar</span>
           </button>
         </div>
-      </div>
-
-      {/* Marka + Ana Terminal Sekme Navigasyonu */}
-      <div className="flex items-center justify-between gap-3 px-3 py-2">
-        <div className="flex items-center gap-2.5 shrink-0">
-          <button
-            type="button"
-            onClick={onToggleMobileSidebar}
-            className="lg:hidden p-1.5 border border-[#27272a] bg-[#18181b] text-zinc-300 hover:border-zinc-500"
-            aria-label="Hisse Listesini Aç"
-          >
-            <Menu className="w-4 h-4" strokeWidth={1.5} />
-          </button>
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-[#f59e0b]" strokeWidth={1.5} />
-            <div className="leading-none">
-              <span className="text-xs font-semibold tracking-widest uppercase text-zinc-100">
-                AlphaDesk
-              </span>
-              <span className="ml-1.5 text-[10px] font-mono uppercase text-zinc-500 hidden sm:inline">
-                QUANT TERMINAL
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <nav className="flex items-center gap-1 overflow-x-auto">
-          {NAV_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onTabChange(tab.id)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border whitespace-nowrap transition-colors ${
-                  isActive
-                    ? 'border-[#f59e0b] bg-[#18181b] text-zinc-100 font-medium'
-                    : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-[#18181b]/60'
-                }`}
-              >
-                <Icon
-                  className={`w-3.5 h-3.5 ${isActive ? 'text-[#f59e0b]' : 'text-zinc-500'}`}
-                  strokeWidth={1.5}
-                />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
       </div>
     </header>
   );
